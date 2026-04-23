@@ -7,7 +7,7 @@ import folium
 from streamlit_folium import st_folium
 import time
 
-from pipeline import load_data, preprocess_data_for_model, DISTRICTS
+from pipeline import load_data, preprocess_data_for_model, DISTRICTS, MEDICINES
 from model import train_model, predict_demand
 
 # --- PAGE CONFIG ---
@@ -24,8 +24,8 @@ def apply_custom_css():
         <style>
         /* Main background */
         .stApp {
-            background-color: #f4f6f9;
-            color: #1e1e1e;
+            background-color: #0f172a;
+            color: #f8fafc;
             font-family: 'Inter', 'Roboto', sans-serif;
         }
         
@@ -40,18 +40,22 @@ def apply_custom_css():
             color: #e2e8f0 !important;
         }
         
-        /* Headers */
-        h1, h2, h3 {
-            color: #0f172a;
+        /* Headers and text */
+        h1, h2, h3, h4, h5, h6, .stMarkdown p strong {
+            color: #f8fafc !important;
             font-weight: 700;
+        }
+        
+        .stMarkdown p, .stMarkdown span {
+            color: #cbd5e1;
         }
         
         /* Cards / Metrics */
         [data-testid="metric-container"] {
-            background-color: #ffffff;
+            background-color: #1e293b;
             border-radius: 10px;
             padding: 15px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
             border-left: 5px solid #3b82f6;
             transition: transform 0.2s ease;
         }
@@ -60,15 +64,20 @@ def apply_custom_css():
             transform: translateY(-2px);
         }
         
+        /* Metric value */
+        [data-testid="stMetricValue"] {
+            color: #f8fafc !important;
+        }
+        
         /* Metric label */
         [data-testid="metric-container"] label {
-            color: #64748b !important;
+            color: #94a3b8 !important;
             font-weight: 600;
         }
         
         /* Button */
         .stButton>button {
-            background-color: #2563eb;
+            background-color: #3b82f6;
             color: white;
             border-radius: 6px;
             border: none;
@@ -78,9 +87,9 @@ def apply_custom_css():
         }
         
         .stButton>button:hover {
-            background-color: #1d4ed8;
+            background-color: #2563eb;
             color: white;
-            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
+            box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
         }
         
         /* Tabs */
@@ -96,8 +105,27 @@ def apply_custom_css():
             gap: 10px;
             padding: 10px 16px;
             font-weight: 600;
+            color: #94a3b8;
         }
         
+        .stTabs [aria-selected="true"] {
+            color: #3b82f6 !important;
+        }
+        
+        /* Overrides to remove default Red/Yellow from alerts */
+        div[data-testid="stAlert"] {
+            background-color: #1e293b !important;
+            color: #f8fafc !important;
+            border: 1px solid #3b82f6 !important;
+        }
+        div[data-testid="stAlert"] svg {
+            fill: #3b82f6 !important;
+        }
+        
+        /* Dataframes */
+        [data-testid="stDataFrame"] {
+            background-color: #1e293b;
+        }
         </style>
     """, unsafe_allow_html=True)
 
@@ -258,6 +286,70 @@ with tab2:
             margin=dict(l=20, r=20, t=20, b=20)
         )
         st.plotly_chart(fig_line, use_container_width=True)
+
+    st.markdown("---")
+    st.markdown("### 🔮 Interactive Demand Forecaster")
+    st.markdown("Predict the demand for all medicines in a specific district and month.")
+    
+    col_inf1, col_inf2, col_inf3 = st.columns(3)
+    with col_inf1:
+        inf_district = st.selectbox("Select District", options=list(DISTRICTS.keys()))
+    with col_inf2:
+        inf_month = st.slider("Select Month", min_value=1, max_value=12, value=5)
+    with col_inf3:
+        inf_temp = st.slider("Average Temperature (°C)", min_value=10, max_value=45, value=30)
+        
+    if st.button("Predict Future Demand"):
+        # Infer season
+        if inf_month in [12, 1, 2]: inf_season = "Winter"
+        elif inf_month in [3, 4, 5]: inf_season = "Summer"
+        elif inf_month in [6, 7, 8, 9]: inf_season = "Monsoon"
+        else: inf_season = "Post-Monsoon"
+        
+        # Build DataFrame for all medicines
+        inf_data = []
+        for med in MEDICINES:
+            inf_data.append({
+                "Month": inf_month,
+                "District": inf_district,
+                "Medicine Name": med,
+                "Season": inf_season,
+                "Temperature": inf_temp
+            })
+        
+        inf_df = pd.DataFrame(inf_data)
+        
+        # Preprocess with get_dummies just like training
+        inf_X = pd.get_dummies(inf_df, columns=["District", "Medicine Name", "Season"])
+        
+        # Predict
+        preds = predict_demand(inf_X)
+        
+        if preds is not None:
+            inf_df['Predicted Demand'] = np.round(preds).astype(int)
+            
+            st.success(f"Predicted demand for {inf_district} in Month {inf_month} ({inf_season})")
+            
+            res_col1, res_col2 = st.columns([1, 2])
+            with res_col1:
+                st.dataframe(inf_df[['Medicine Name', 'Predicted Demand']], use_container_width=True, hide_index=True)
+            with res_col2:
+                fig_inf = px.bar(
+                    inf_df, 
+                    x='Medicine Name', 
+                    y='Predicted Demand',
+                    color='Predicted Demand',
+                    color_continuous_scale='Blues',
+                    text_auto=True
+                )
+                fig_inf.update_layout(
+                    plot_bgcolor='rgba(0,0,0,0)', 
+                    paper_bgcolor='rgba(0,0,0,0)',
+                    margin=dict(l=0, r=0, t=0, b=0)
+                )
+                st.plotly_chart(fig_inf, use_container_width=True)
+        else:
+            st.error("Model not found. Please click 'Train / Retrain Model' first to generate the model file.")
 
 # ==========================================
 # TAB 3: MAHARASHTRA MAP & INSIGHTS
